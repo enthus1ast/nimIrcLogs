@@ -1,7 +1,8 @@
 import nimiBrowser
 import asyncdispatch, tables, strtabs, os,
-  strutils, uri, httpcore, httpclient, times
-export times
+  strutils, uri, httpcore, httpclient
+import chrono
+export chrono
 const baseUrl = parseUri "https://irclogs.nim-lang.org/"
 
 type
@@ -10,8 +11,7 @@ type
     url: string
     body: string
 
-
-proc getDate*(body: string): DateTime =
+proc getDate*(body: string): TimeStamp =
   const ss = "<title>"
   const ee = "</title>"
   var ssi = body.find(ss)
@@ -26,16 +26,14 @@ proc getDate*(body: string): DateTime =
   if dateParts[1].len == 3:
     dateParts[1] = dateParts[1][1..^1] #strip first
   dateStr = dateParts.join("-")
-  result = parse(dateStr, "dd-MM-yyyy")
-  # result.timezone = utc()
+  result =  parseTs("{day/2}-{month/2}-{year/4}", dateStr)
 
-proc toDateStr(dt: DateTime): string =
-  return dt.format("dd-MM-yyyy")
-
+proc toDateStr(dt: TimeStamp): string =
+  # return dt.format("dd-MM-yyyy")
+  return dt.format("{day/2}-{month/2}-{year/4}")
 
 when isMainModule:
-  echo getDate("<html><head><title>#nim logs for 26-04-2022</title><meta c")
-
+  # echo getDate("<html><head><title>#nim logs for 26-04-2022</title><meta c")
 
   var br = newNimiBrowser()
   var startDate = waitFor((waitFor br.get($baseUrl)).body).getDate()
@@ -46,16 +44,21 @@ when isMainModule:
     if errors > 50:
       echo "done?"
       break
-    curDate = curDate - initDuration(days = 1)
+    var cal = curDate.calendar()
+    echo cal
+    cal.sub(Day, 1)
+    curDate = cal.ts()
     let curDateStr = curDate.toDateStr()
     if existsFile(curDateStr & ".html"):
       echo "[-] ", curDateStr
       errors = 0
     else:
-      echo "[+] ", curDateStr
-      let resp = waitFor br.get $(baseUrl / (curDateStr & ".html"))
+      let url = $(baseUrl / (curDateStr & ".html"))
+      echo "[+] ", url
+      let resp = waitFor br.get url
       if resp.code != Http200:
         echo "error"
+        # echo waitFor resp.body
         errors.inc
         continue
       errors = 0

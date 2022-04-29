@@ -24,7 +24,7 @@ type
     MPart = "part" # legacy quit?
   Msg = object
     kind: MsgType
-    time: DateTime
+    time: TimeStamp
     nick: string
     realNick: string # if bridged, this should contain the real nick
     msg: string
@@ -35,9 +35,8 @@ type
     userB: string
     count: int
 
-
 const allowedNickChars = Letters + Digits
-var commonEnglishWords = @["the", "be", "to", "of", "and", "a", "in", "that", "have", "I", "it", "for", "not", "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think", "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even", "new", "want", "because", "any", "these", "give", "day", "most", "us"].toHashSet()
+var commonEnglishWords = readFile("commonEnglishWords.txt").splitLines().toHashSet()
 
 proc normalizeNick(nick: string): string =
   for ch in nick:
@@ -61,6 +60,8 @@ proc extractRealNick(msg: var Msg) =
       nickToRealnick()
   else:
     nickToRealnick()
+  msg.realNick = msg.realNick.normalizeNick()
+  msg.nick = msg.nick.normalizeNick()
 
 iterator parseMsgs(path: string): Msg =
   let html = loadHtml(path)
@@ -82,11 +83,18 @@ iterator parseMsgs(path: string): Msg =
       var tds = tr.findAll("td")
       if tds.len >= 3:
         try:
-          let time = tds[0].innerText.parse("hh':'mm':'ss")
-          date.hour = time.hour
-          date.minute = time.minute
-          date.second = time.second
-          msg.time = date
+          # let time = tds[0].innerText.parse("hh':'mm':'ss")
+          # let time = tds[0].innerText.parseTs("{hour/2}:{minute/2}:{second/2}")
+          # date.hour = time.hour
+          # date.minute = time.minute
+          # date.second = time.second
+          # msg.time = date
+          var cal = msg.time.calendar()
+          let timePart = parseCalendar("{hour/2}:{minute/2}:{second/2}", tds[0].innerText)
+          cal.add(Hour, timePart.hour)
+          cal.add(Minute, timePart.minute)
+          cal.add(Second, timePart.second)
+
         except:
           echo getCurrentExceptionMsg()
           echo "Date will be incorrect!"
@@ -151,7 +159,7 @@ proc getUserInteractions(db: DbConn) = #users: HashSet[string], msgs: seq[Msg]):
   #       print user, "->", msg.realNick
   #       result[user].incl msg.realNick
 
-when isMainModule and true:
+when isMainModule and false:
   # let data = readFile("msgs.nn")
   # print "read done"
   # var msgs = to[seq[Msg]](data)
@@ -163,16 +171,18 @@ when isMainModule and true:
   db.getUserInteractions()
 
 
-when isMainModule and false:
+when isMainModule and true:
 
   var db = open("entries.sqlite", "", "", "")
+  db.exec(sql"drop table Msg;")
   db.exec(sql ct(Msg))
 
+  db.exec(sql"begin transaction;")
   for path in walkFiles("*.html"):
-    db.exec(sql"begin transaction;")
     for msg in parseMsgs(path):
+      # print msg.nick, msg.realNick
       db.exec(sql ci(Msg), msg.kind, msg.time, msg.nick, msg.realNick, msg.msg, msg.realMsg, msg.file)
-    db.exec(sql"commit;")
+  db.exec(sql"commit;")
 
     # Create some indexes
     # db.exec(sql"""
