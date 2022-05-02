@@ -38,6 +38,59 @@ type
 const allowedNickChars = Letters + Digits
 var commonEnglishWords = readFile("commonEnglishWords.txt").splitLines().toHashSet()
 
+
+proc getYears(db: DbConn): seq[string] =
+  ## Returns all years with logs available
+  for row in db.getAllRows(sql"select strftime('%Y-%m', time) as year from Msg group by year order by year asc;"):
+    result.add row[0]
+
+# proc getUsers(db: DbConn): seq[string] =
+#   ## Returns all users
+
+proc toTimestamp(str: string): TimeStamp =
+  parseIsoTs(str)
+
+proc getFirstAndLastPost*(db: DbConn, realNick: string): tuple[realNick: string, oldId: int, oldTime: Timestamp, newId: int, newTime: Timestamp] =
+  let rows = db.getAllRows(sql"""
+    select * from (
+      (select realNick, id as oldId, time as oldTime from Msg where realNick = ? order by time asc limit 1) ,
+      (select id as newId, time as newTime from Msg where realNick = ? order by time desc limit 1)
+    )
+  """, realNick, realNick)
+  rows[0].to(result)
+
+
+proc getUsers*(db: DbConn): HashSet[string] =
+  let rows = db.getAllRows(sql"select realNick from Msg where realNick != '' group by realNick;")
+  for row in rows:
+    result.incl row[0]
+
+proc getUsers*(db: DbConn, year: string): HashSet[string] =
+  ## get users for the given year
+  for row in db.getAllRows(sql"select realNick from Msg where  strftime('%Y-%m', time) = ? and realNick != '' GROUP by realNick", year):
+    result.incl row[0]
+
+
+proc getAllUsersPerYear*(db: DbConn): OrderedTable[string, HashSet[string]] =
+  result = initOrderedTable[string, HashSet[string]]()
+  for year in db.getYears():
+    result[year] = db.getUsers(year)
+    print year, result[year].len()
+
+proc getMsgs*(db: DbConn, yearMonth: string): seq[string] =
+  ## get msgs per yearMonth
+  for row in db.getAllRows(sql"select msg from Msg where strftime('%Y-%m', time) = ? and realNick != ''", yearMonth):
+    result.add row[0]
+
+proc getAllMsgsPerYear*(db: DbConn): OrderedTable[string, seq[string]] =
+  for year in db.getYears():
+    result[year] = db.getMsgs(year)
+#
+# Lost forever, computes users that
+# where in the sets before, but not in the newer sets
+# let yy = toSeq(result.keys())
+
+
 proc normalizeNick(nick: string): string =
   for ch in nick:
     if ch in allowedNickChars:
@@ -89,12 +142,12 @@ iterator parseMsgs(path: string): Msg =
           # date.minute = time.minute
           # date.second = time.second
           # msg.time = date
-          var cal = msg.time.calendar()
+          var cal = date.calendar()
           let timePart = parseCalendar("{hour/2}:{minute/2}:{second/2}", tds[0].innerText)
           cal.add(Hour, timePart.hour)
           cal.add(Minute, timePart.minute)
           cal.add(Second, timePart.second)
-
+          msg.time = cal.ts()
         except:
           echo getCurrentExceptionMsg()
           echo "Date will be incorrect!"
@@ -109,7 +162,7 @@ when isMainModule and false:
   var idx = 0
   var outp = open("msgs.nn", fmWrite)
   var msgs: seq[Msg] = @[]
-  for path in walkFiles("*.html"):
+  for path in walkFiles(basePath / "*.html"):
     # block:
     # let path = """C:\Users\david\projects\nimIrclogs\27-03-2022.html"""
     for msg in parseMsgs(path):
@@ -121,18 +174,13 @@ when isMainModule and false:
   outp.write $$msgs
   # echo users
 
-proc getUsers(db: DbConn): HashSet[string] =
-  let rows = db.getAllRows(sql"select realNick from Msg group by realNick;")
-  for row in rows:
-    result.incl row[0]
-
 # proc getUsers(msgs: seq[Msg]): HashSet[string] =
 #   result = initHashSet[string]()
 #   for msg in msgs:
 #     result.incl msg.realNick
 
 proc getUserInteractions(db: DbConn) = #users: HashSet[string], msgs: seq[Msg]): Table[string, HashSet[string]] =
-  db.exec(sql("drop table Interaction;"))
+  db.exec(sql("drop table if exists Interaction;"))
   db.exec(sql ct(Interaction))
   let users = db.getUsers()
   for user in users:
@@ -172,17 +220,42 @@ when isMainModule and false:
 
 
 when isMainModule and true:
+  var db = open("entries.sqlite", "", "", "")
+  echo db.getAllUsersPerYear()
+  for user in db.getAllRows(sql"select distinct realNick from Msg"):
+    echo db.getFirstAndLastPost(user[0])
+
+when isMainModule and false:
 
   var db = open("entries.sqlite", "", "", "")
-  db.exec(sql"drop table Msg;")
+  db.exec(sql"drop table if exists Msg;")
   db.exec(sql ct(Msg))
 
   db.exec(sql"begin transaction;")
-  for path in walkFiles("*.html"):
+  for path in walkFiles(basePath / "*.html"):
     for msg in parseMsgs(path):
       # print msg.nick, msg.realNick
-      db.exec(sql ci(Msg), msg.kind, msg.time, msg.nick, msg.realNick, msg.msg, msg.realMsg, msg.file)
+      db.exec(sql ci(Msg), msg.kind, msg.time.formatIso(), msg.nick, msg.realNick, msg.msg, msg.realMsg, msg.file)
   db.exec(sql"commit;")
+
+  db.exec(sql"""CREATE INDEX if not exists "msg_year" ON "Msg" ( strftime('%Y', time))""")
+  db.exec(sql"""CREATE INDEX if not exists "msg_year_month" ON "Msg" ( strftime('%Y-%m', time))""")
+  db.exec(sql"""CREATE INDEX if not exists "msg_year_month_day" ON "Msg" ( strftime('%Y-%m-%d', time))""")
+
+  db.exec(sql"""
+  create view if not exists log_year_month_day AS
+    select strftime('%Y-%m-%d', time) as year_month_day from Msg group by year_month_day order by year_month_day asc;
+  """)
+
+  db.exec(sql"""
+  create view if not exists log_year_month AS
+    select strftime('%Y-%m', time) as year_month from Msg group by year_month order by year_month asc;
+  """)
+
+  db.exec(sql"""
+  create view if not exists log_year AS
+    select strftime('%Y', time) as year from Msg group by year order by year asc;
+  """)
 
     # Create some indexes
     # db.exec(sql"""

@@ -3,7 +3,9 @@ import asyncdispatch, tables, strtabs, os,
   strutils, uri, httpcore, httpclient
 import chrono
 export chrono
+
 const baseUrl = parseUri "https://irclogs.nim-lang.org/"
+let basePath* = getAppDir() / "pages"
 
 type
   DateStr = string
@@ -49,7 +51,7 @@ when isMainModule:
     cal.sub(Day, 1)
     curDate = cal.ts()
     let curDateStr = curDate.toDateStr()
-    if existsFile(curDateStr & ".html"):
+    if existsFile(basePath / curDateStr & ".html"):
       echo "[-] ", curDateStr
       errors = 0
     else:
@@ -62,4 +64,4 @@ when isMainModule:
         errors.inc
         continue
       errors = 0
-      writeFile(curDateStr & ".html", waitFor resp.body)
+      writeFile(basePath / curDateStr & ".html", waitFor resp.body)

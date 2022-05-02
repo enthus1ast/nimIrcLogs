@@ -1,0 +1,12 @@
+<html>
+<head>
+  <title>Nim insights</title>
+  <link rel="stylesheet" href="/uplot/uPlot.min.css">
+</head>
+<body>
+<script src="/uplot/uPlot.iife.min.js"></script>
+<h1>Nim insights</h1>
+{%block content%}
+{% endblock %}
+</body>
+</html>
